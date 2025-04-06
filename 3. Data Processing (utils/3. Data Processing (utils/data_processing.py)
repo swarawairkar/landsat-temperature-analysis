@@ -1,0 +1,54 @@
+import pandas as pd
+import numpy as np
+import streamlit as st
+
+def process_landsat_data(data):
+    """
+    Process raw Landsat data for visualization and analysis.
+    
+    Parameters:
+        data (pandas.DataFrame): Raw Landsat data
+        
+    Returns:
+        pandas.DataFrame: Processed data ready for visualization
+    """
+    # Cache processing to improve performance
+    @st.cache_data(ttl=3600)  # Cache for 1 hour
+    def process_data(df):
+        if df is None or df.empty:
+            return None
+        
+        # Make a copy to avoid modifying the original
+        processed_df = df.copy()
+        
+        # Clean the data
+        # Remove rows with missing values
+        processed_df = processed_df.dropna(subset=['temperature', 'latitude', 'longitude'])
+        
+        # Filter out poor quality data
+        if 'quality' in processed_df.columns:
+            processed_df = processed_df[processed_df['quality'] != 'poor']
+        
+        # Convert temperature to standard format (Celsius)
+        # Check if temperature is already in Celsius (typical range 0-50 for land surface)
+        # If not, convert from Kelvin to Celsius
+        if processed_df['temperature'].mean() > 100:  # Probably in Kelvin
+            processed_df['temperature'] = processed_df['temperature'] - 273.15
+            
+        # Round temperature values to 1 decimal place for cleaner display
+        processed_df['temperature'] = processed_df['temperature'].round(1)
+        
+        # Add a temperature category column for visualization
+        temp_bins = [0, 15, 20, 25, 30, 35, 40, 45, 50]
+        temp_labels = ["< 15°C", "15-20°C", "20-25°C", "25-30°C", "30-35°C", "35-40°C", "40-45°C", "> 45°C"]
+        processed_df['temp_category'] = pd.cut(processed_df['temperature'], 
+                                              bins=temp_bins, 
+                                              labels=temp_labels, 
+                                              include_lowest=True)
+        
+        # Add a date_formatted column for better display
+        processed_df['date_formatted'] = processed_df['date'].dt.strftime('%Y-%m-%d')
+        
+        return processed_df
+    
+    return process_data(data)
