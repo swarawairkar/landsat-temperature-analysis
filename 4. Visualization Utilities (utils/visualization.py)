@@ -1,0 +1,241 @@
+import folium
+from folium.plugins import HeatMap, MarkerCluster
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+import streamlit as st
+from branca.colormap import linear
+
+def create_lst_map(data, district):
+    """
+    Create an interactive map visualization of Land Surface Temperature data.
+    
+    Parameters:
+        data (pandas.DataFrame): Processed Landsat data
+        district (str): Selected district or "All"
+        
+    Returns:
+        folium.Map: Interactive map object
+    """
+    if data is None or data.empty:
+        return folium.Map(location=[10.7905, 78.7047], zoom_start=7)
+    
+    # Determine the center of the map based on the data
+    center_lat = data['latitude'].mean()
+    center_lon = data['longitude'].mean()
+    
+    # Create a map centered on the data
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=9, 
+                   tiles="CartoDB positron")
+    
+    # Add a title to the map
+    title_html = f'''
+        <h3 align="center" style="font-size:16px"><b>Land Surface Temperature Map</b></h3>
+        <h4 align="center" style="font-size:14px"><i>District: {district}</i></h4>
+    '''
+    m.get_root().html.add_child(folium.Element(title_html))
+    
+    # Create a colormap for temperature
+    min_temp = data['temperature'].min()
+    max_temp = data['temperature'].max()
+    
+    colormap = linear.RdYlBu_11.scale(min_temp, max_temp)
+    colormap.caption = 'Temperature (°C)'
+    m.add_child(colormap)
+    
+    # Add temperature data as a heatmap layer
+    heat_data = [[row['latitude'], row['longitude'], row['temperature']] 
+                 for _, row in data.iterrows()]
+    
+    HeatMap(heat_data, 
+            radius=15, 
+            min_opacity=0.5,
+            max_val=max_temp,
+            gradient={0.4: 'blue', 0.65: 'lime', 0.8: 'yellow', 1: 'red'}).add_to(m)
+    
+    # Add points with popup info for detailed exploration
+    marker_cluster = MarkerCluster().add_to(m)
+    
+    for _, row in data.iterrows():
+        temp = row['temperature']
+        color = 'blue' if temp < 25 else 'green' if temp < 30 else 'orange' if temp < 35 else 'red'
+        
+        popup_text = f"""
+        <strong>District:</strong> {row['district']}<br>
+        <strong>Temperature:</strong> {temp}°C<br>
+        <strong>Date:</strong> {row['date_formatted']}<br>
+        <strong>Coordinates:</strong> {row['latitude']:.4f}, {row['longitude']:.4f}
+        """
+        
+        folium.CircleMarker(
+            location=[row['latitude'], row['longitude']],
+            radius=5,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.7,
+            popup=folium.Popup(popup_text, max_width=300)
+        ).add_to(marker_cluster)
+    
+    # Add layer control
+    folium.LayerControl().add_to(m)
+    
+    return m
+
+def create_temperature_heatmap(data, year, month, time_of_day, district):
+    """
+    Create a temperature heatmap visualization.
+    
+    Parameters:
+        data (pandas.DataFrame): Processed Landsat data
+        year (str): Selected year
+        month (str): Selected month
+        time_of_day (str): "Daytime" or "Nighttime"
+        district (str): Selected district or "All"
+        
+    Returns:
+        plotly.graph_objects.Figure: Heatmap figure
+    """
+    if data is None or data.empty:
+        return go.Figure()
+    
+    # Group data by district and date
+    if district == "All":
+        # Convert date to day of month
+        data['day'] = data['date'].dt.day
+        
+        # Create a pivot table with districts and days
+        pivot_data = data.pivot_table(
+            values='temperature',
+            index='district',
+            columns='day',
+            aggfunc='mean'
+        ).round(1)
+        
+        # Fill missing values with NaN
+        pivot_data = pivot_data.reindex(columns=range(1, 32))
+        
+        # Create heatmap
+        fig = px.imshow(
+            pivot_data,
+            labels=dict(x="Day of Month", y="District", color="Temperature (°C)"),
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            color_continuous_scale="RdBu_r",
+            zmin=20,  # Minimum temperature for scale
+            zmax=40   # Maximum temperature for scale
+        )
+        
+        fig.update_layout(
+            title=f"Average Daily Temperature Heatmap - {month}/{year} ({time_of_day})",
+            xaxis_title="Day of Month",
+            yaxis_title="District",
+            coloraxis_colorbar=dict(title="Temp (°C)")
+        )
+    else:
+        # For single district, show detailed date data
+        data['day'] = data['date'].dt.day
+        data['hour'] = data['date'].dt.hour
+        
+        # Create a pivot table with days and hours
+        pivot_data = data.pivot_table(
+            values='temperature',
+            index='hour',
+            columns='day',
+            aggfunc='mean'
+        ).round(1)
+        
+        # Create heatmap
+        fig = px.imshow(
+            pivot_data,
+            labels=dict(x="Day of Month", y="Hour of Day", color="Temperature (°C)"),
+            x=pivot_data.columns,
+            y=pivot_data.index,
+            color_continuous_scale="RdBu_r"
+        )
+        
+        fig.update_layout(
+            title=f"Temperature Heatmap for {district} - {month}/{year} ({time_of_day})",
+            xaxis_title="Day of Month",
+            yaxis_title="Hour of Day",
+            coloraxis_colorbar=dict(title="Temp (°C)")
+        )
+    
+    return fig
+
+def create_district_comparison(data, year, month, time_of_day):
+    """
+    Create a district comparison visualization.
+    
+    Parameters:
+        data (pandas.DataFrame): Processed Landsat data
+        year (str): Selected year
+        month (str): Selected month
+        time_of_day (str): "Daytime" or "Nighttime"
+        
+    Returns:
+        plotly.graph_objects.Figure: Comparison figure
+    """
+    if data is None or data.empty:
+        return go.Figure()
+    
+    # Group data by district and calculate statistics
+    district_stats = data.groupby('district')['temperature'].agg(
+        ['mean', 'min', 'max', 'std']
+    ).reset_index()
+    
+    # Round values for better display
+    district_stats['mean'] = district_stats['mean'].round(1)
+    district_stats['min'] = district_stats['min'].round(1)
+    district_stats['max'] = district_stats['max'].round(1)
+    district_stats['std'] = district_stats['std'].round(2)
+    
+    # Sort by mean temperature
+    district_stats = district_stats.sort_values('mean', ascending=False)
+    
+    # Create bar chart with error bars
+    fig = go.Figure()
+    
+    # Add mean temperature bars
+    fig.add_trace(go.Bar(
+        x=district_stats['district'],
+        y=district_stats['mean'],
+        name='Mean Temperature',
+        marker_color='rgb(158,202,225)',
+        error_y=dict(
+            type='data',
+            array=district_stats['std'],
+            visible=True
+        )
+    ))
+    
+    # Add min/max range
+    for i, row in district_stats.iterrows():
+        fig.add_trace(go.Scatter(
+            x=[row['district'], row['district']],
+            y=[row['min'], row['max']],
+            mode='lines',
+            line=dict(width=2, color='rgb(128,128,128)'),
+            showlegend=i==0,
+            name='Min/Max Range'
+        ))
+    
+    # Update layout
+    fig.update_layout(
+        title=f"District Temperature Comparison - {month}/{year} ({time_of_day})",
+        xaxis_title="District",
+        yaxis_title="Temperature (°C)",
+        legend_title="Legend",
+        xaxis={'categoryorder':'array', 'categoryarray':district_stats['district']}
+    )
+    
+    # Adjust for better display of district names
+    fig.update_layout(
+        xaxis=dict(
+            tickangle=-45,
+            tickfont=dict(size=10)
+        )
+    )
+    
+    return fig
