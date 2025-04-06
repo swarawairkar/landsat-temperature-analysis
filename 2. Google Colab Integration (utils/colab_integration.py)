@@ -1,0 +1,144 @@
+import pandas as pd
+import numpy as np
+import os
+import requests
+import json
+import io
+import streamlit as st
+from datetime import datetime
+
+def fetch_data_from_colab(year, month, time_of_day, district, layer):
+    """
+    Fetch data from Google Colab notebook based on selected parameters.
+    
+    In a real implementation, this would connect to the Google Colab API
+    or use a pre-exported dataset from the notebook.
+    
+    For this demo, we're generating simulated data that matches the format
+    expected from the Landsat analysis.
+    
+    Parameters:
+        year (str): Selected year
+        month (str): Selected month
+        time_of_day (str): "Daytime" or "Nighttime"
+        district (str): Selected district or "All"
+        layer (str): Selected data layer (currently only "LST")
+        
+    Returns:
+        pandas.DataFrame: DataFrame containing the Landsat data
+    """
+    # In a production environment, implement actual Colab integration
+    # For now, return simulated data
+
+    # Cache the data to avoid regenerating it on every call
+    @st.cache_data(ttl=3600)  # Cache for 1 hour
+    def generate_simulated_data(year, month, time, district_filter, layer_type):
+        # All districts in Tamil Nadu
+        all_districts = [
+            "Ariyalur", "Chennai", "Coimbatore", "Cuddalore", "Dharmapuri", 
+            "Dindigul", "Erode", "Kancheepuram", "Kanniyakumari", "Karur", "Madurai", 
+            "Nagapattinam", "Namakkal", "Nilgiris", "Perambalur", "Pudukkottai", 
+            "Ramanathapuram", "Salem", "Sivaganga", "Thanjavur", "Theni", "Thiruvallur", 
+            "Thoothukudi", "Tiruchchirappalli", "Tirunelveli Kattabo", "Tiruvannamalai", 
+            "Vellore", "Villupuram", "Virudhunagar"
+        ]
+        
+        # Filter to specific district if not "All"
+        if district_filter != "All":
+            districts = [district_filter]
+        else:
+            districts = all_districts
+        
+        # Generate dates for the given month
+        year_int = int(year)
+        month_int = int(month)
+        # Get number of days in month
+        if month_int in [4, 6, 9, 11]:
+            days_in_month = 30
+        elif month_int == 2:
+            # Check for leap year
+            if (year_int % 4 == 0 and year_int % 100 != 0) or (year_int % 400 == 0):
+                days_in_month = 29
+            else:
+                days_in_month = 28
+        else:
+            days_in_month = 31
+            
+        # Generate a reasonable number of data points
+        num_points = len(districts) * 10  # 10 points per district
+        
+        # Create empty dataframe
+        df = pd.DataFrame()
+        
+        # Add date column
+        df['date'] = [datetime(year_int, month_int, 
+                              np.random.randint(1, days_in_month + 1)) 
+                      for _ in range(num_points)]
+        
+        # Add district column
+        df['district'] = np.random.choice(districts, num_points)
+        
+        # Add coordinates (approximate for Tamil Nadu)
+        # Tamil Nadu bounding box: roughly 8.0°N to 13.5°N and 76.5°E to 80.5°E
+        df['latitude'] = np.random.uniform(8.0, 13.5, num_points)
+        df['longitude'] = np.random.uniform(76.5, 80.5, num_points)
+        
+        # Add temperature data
+        # Base temperatures vary by district and time of day
+        temp_base = {
+            "Daytime": {
+                "Chennai": 33, "Coimbatore": 30, "Madurai": 32, "Nilgiris": 24
+            },
+            "Nighttime": {
+                "Chennai": 27, "Coimbatore": 22, "Madurai": 25, "Nilgiris": 15
+            }
+        }
+        
+        # Set defaults for districts not specifically defined
+        temp_base["Daytime"]["default"] = 31
+        temp_base["Nighttime"]["default"] = 24
+        
+        # Generate temperatures with realistic patterns
+        temperatures = []
+        for i in range(num_points):
+            district_name = df.iloc[i]['district']
+            if district_name in temp_base[time]:
+                base = temp_base[time][district_name]
+            else:
+                base = temp_base[time]["default"]
+                
+            # Add some seasonal adjustment based on month
+            # March (3) - starting to warm up
+            # April (4) - getting hotter
+            # May (5) - hottest
+            # June (6) - slightly less hot
+            month_adjustment = {
+                "3": -1.0,
+                "4": 1.0,
+                "5": 2.5,
+                "6": 1.5
+            }
+            
+            # Apply random variation and month adjustment
+            temp = base + month_adjustment[month] + np.random.normal(0, 1.5)
+            temperatures.append(temp)
+            
+        df['temperature'] = temperatures
+        
+        # Add a cloud cover column
+        df['cloud_cover'] = np.random.uniform(0, 0.3, num_points)  # 0-30% cloud cover
+        
+        # Add a data quality column
+        df['quality'] = np.random.choice(['good', 'moderate', 'poor'], 
+                                         p=[0.7, 0.2, 0.1], 
+                                         size=num_points)
+        
+        return df
+    
+    # Generate and return the data
+    try:
+        data = generate_simulated_data(year, month, time_of_day, district, layer)
+        return data
+    except Exception as e:
+        st.error(f"Error generating data: {str(e)}")
+        return None
